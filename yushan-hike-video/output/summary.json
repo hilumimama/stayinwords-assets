@@ -1,0 +1,47 @@
+{
+  "total_points": 42813,
+  "total_distance_km": 24.86,
+  "interpolated_points": 2748,
+  "elevation_gain_m": 2372.7,
+  "start_time": "2026-09-14T01:36:19+00:00",
+  "end_time": "2026-09-15T05:45:59+00:00",
+  "max_elevation_m": 3959.9,
+  "gaps": [
+    {
+      "after_segment": 0,
+      "gap_distance_m": 79.1,
+      "time_start": "2026-09-14T02:48:58+00:00",
+      "time_end": "2026-09-14T03:00:36+00:00",
+      "filled_points": 208,
+      "snap_error_start_m": 0.3,
+      "snap_error_end_m": 11.6
+    },
+    {
+      "after_segment": 1,
+      "gap_distance_m": 598.2,
+      "time_start": "2026-09-14T07:46:05+00:00",
+      "time_end": "2026-09-14T20:10:22+00:00",
+      "filled_points": 660,
+      "snap_error_start_m": 15.3,
+      "snap_error_end_m": 0.3
+    },
+    {
+      "after_segment": 2,
+      "gap_distance_m": 142.1,
+      "time_start": "2026-09-14T20:42:11+00:00",
+      "time_end": "2026-09-14T22:46:26+00:00",
+      "filled_points": 1873,
+      "snap_error_start_m": 0.3,
+      "snap_error_end_m": 1.5
+    },
+    {
+      "after_segment": 3,
+      "gap_distance_m": 39.4,
+      "time_start": "2026-09-14T23:44:11+00:00",
+      "time_end": "2026-09-15T01:07:41+00:00",
+      "filled_points": 7,
+      "snap_error_start_m": 2.1,
+      "snap_error_end_m": 1.2
+    }
+  ]
+}
