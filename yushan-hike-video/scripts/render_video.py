@@ -189,6 +189,8 @@ def main():
     total_dist_km = rs["cum"][-1] / 1000
     max_ele = rs["ele"].max()
     idx_summit = rs["idx_summit"]
+    final_gains = np.diff(rs["ele"])
+    final_gain = final_gains[final_gains > 0].sum()
 
     fig = plt.figure(figsize=FIGSIZE, dpi=DPI)
     fig.patch.set_facecolor("#0b0f0c")
@@ -307,14 +309,14 @@ def main():
             cam_hh = lerp(ohh, fhh, t)
             set_camera(cam_cx, cam_cy, cam_hw, cam_hh)
         else:
-            big_title.set_alpha(0)
-            big_sub.set_alpha(0)
-            dim_overlay.patch.set_alpha(min(0.6, (i - n_intro - n_main) / (n_outro * 0.5)))
             set_progress(n - 1)
             set_camera(ocx, ocy, ohw, ohh)
-            big_title.set_text(f"{summary['total_distance_km']} km")
-            big_sub.set_text(f"爬升 {summary['elevation_gain_m']:.0f} m   ·   最高 {max_ele:.0f} m")
             reveal = min(1, (i - n_intro - n_main) / (n_outro * 0.5))
+            for a in intro_group:
+                a.set_alpha(max(0, 1 - reveal * 1.5))
+            dim_overlay.patch.set_alpha(min(0.6, reveal))
+            big_title.set_text(f"{summary['total_distance_km']} km")
+            big_sub.set_text(f"爬升 {final_gain:.0f} m   ·   最高 {max_ele:.0f} m")
             big_title.set_alpha(reveal)
             big_sub.set_alpha(reveal)
         return [lc_rec, lc_int, marker, prof_line, stats_text, big_title, big_sub]
