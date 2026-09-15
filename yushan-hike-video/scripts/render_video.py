@@ -17,6 +17,7 @@ import matplotlib
 matplotlib.use("Agg")
 matplotlib.rcParams["font.family"] = "Noto Sans CJK TC"
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as pe
 from matplotlib.animation import FuncAnimation
 from matplotlib.collections import LineCollection
 from matplotlib.colors import LightSource, LinearSegmentedColormap
@@ -37,6 +38,11 @@ INTRO_SEC, MAIN_SEC, OUTRO_SEC = 2.5, 40, 3.5
 ASPECT = W / H  # width/height of the frame
 FOLLOW_HALF_HEIGHT_M = 1300  # camera zoom window while following the hiker
 M_PER_DEG_LAT = 110540
+
+# Paiyun Lodge sits where the recorded segments arrive/depart around
+# (23.4665, 120.9499); the exact marker position is the centroid of the
+# hike's own recorded points near that spot, not a guessed coordinate.
+PAIYUN_LODGE_ANCHOR = (23.4665, 120.9499)
 
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -98,6 +104,14 @@ def resample(pts, step_m=RESAMPLE_STEP_M):
     }
 
 
+def find_lodge_coords(pts, anchor=PAIYUN_LODGE_ANCHOR, radius_m=120):
+    lat0, lon0 = anchor
+    near = [p for p in pts if haversine(p["lat"], p["lon"], lat0, lon0) < radius_m]
+    if not near:
+        return anchor
+    return (sum(p["lat"] for p in near) / len(near), sum(p["lon"] for p in near) / len(near))
+
+
 def camera_windows(rs, mean_lat_rad):
     """Half-height/half-width (in degrees) for the follow camera and the
     overview camera, plus the overall bbox the terrain grid must cover."""
@@ -148,7 +162,7 @@ def fetch_srtm_tile(lat, lon):
     return data, lat_i, lon_i
 
 
-def build_terrain(grid_bbox, upsample=3, blur_sigma=1.0):
+def build_terrain(grid_bbox, upsample=8, blur_sigma=0.5):
     lon_min, lon_max, lat_min, lat_max = grid_bbox
     mean_lat_rad = radians((lat_min + lat_max) / 2)
 
@@ -235,7 +249,21 @@ def main():
     ax.set_ylim(extent[2], extent[3])
     ax.set_aspect(1 / cos(mean_lat_rad))
     ax.axis("off")
-    ax.imshow(rgb, extent=extent, origin="lower", interpolation="bilinear", zorder=0)
+    ax.imshow(rgb, extent=extent, origin="lower", interpolation="lanczos", zorder=0)
+
+    lodge_lat, lodge_lon = find_lodge_coords(pts)
+    summit_lat, summit_lon = rs["lat"][idx_summit], rs["lon"][idx_summit]
+    label_fx = [pe.withStroke(linewidth=3, foreground="black")]
+    lat_off = (extent[3] - extent[2]) * 0.018
+    for (lon_, lat_), label, color, mk in [
+        (( lodge_lon, lodge_lat), "排雲山莊", "#3fa7ff", "o"),
+        ((summit_lon, summit_lat), "玉山主峰 3952m", "#ff4d4d", "^"),
+    ]:
+        ax.plot(lon_, lat_, marker=mk, markersize=10, color=color,
+                 markeredgecolor="white", markeredgewidth=1.5, zorder=4.6)
+        ax.text(lon_, lat_ + lat_off, label, ha="center", va="bottom",
+                 fontsize=13, color="white", fontweight="bold", zorder=4.6,
+                 path_effects=label_fx)
 
     lc_rec = LineCollection([], colors="#ffd23f", linewidths=3.2, zorder=3, capstyle="round")
     lc_int = LineCollection([], colors="#ffd23f", linewidths=2.4, linestyles=(0, (3, 3)), alpha=0.85, zorder=3)
@@ -360,7 +388,7 @@ def main():
     out_path = OUT / "yushan_hike.mp4"
     anim.save(out_path, fps=FPS, dpi=DPI,
                savefig_kwargs={"facecolor": fig.get_facecolor()},
-               extra_args=["-pix_fmt", "yuv420p"])
+               extra_args=["-pix_fmt", "yuv420p", "-crf", "16", "-preset", "slow"])
     print("saved", out_path)
 
 
