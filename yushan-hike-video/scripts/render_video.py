@@ -1,12 +1,15 @@
 """
 Render a Relive-style animated route video from the merged Yushan track.
-No live satellite tiles are available in this sandbox (egress is allow-listed
-and blocks tile servers), so the background is a hillshaded terrain relief
-built from the hike's own recorded/interpolated elevation samples.
+No live satellite/vector tile servers are reachable in this sandbox (egress
+is allow-listed), but the public AWS "elevation-tiles-prod" SRTM bucket is,
+so the background is a hillshaded relief built from real SRTM1 terrain data
+(~30m resolution), not just interpolated from the hike's own GPS samples.
 """
+import gzip
 import json
+import subprocess
 from datetime import timedelta, datetime, timezone
-from math import radians, sin, cos, sqrt, atan2
+from math import radians, sin, cos, sqrt, atan2, floor, ceil
 from pathlib import Path
 
 import numpy as np
@@ -17,12 +20,13 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.collections import LineCollection
 from matplotlib.colors import LightSource, LinearSegmentedColormap
-from scipy.interpolate import griddata
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, zoom as ndi_zoom
 
 BASE = Path(__file__).resolve().parent.parent
 OUT = BASE / "output"
+TERRAIN_CACHE = BASE / "terrain_cache"
 TZ = timezone(timedelta(hours=8))
+SRTM_SIZE = 3601
 
 W, H, DPI = 1080, 1920, 120
 FIGSIZE = (W / DPI, H / DPI)
@@ -121,26 +125,57 @@ def camera_windows(rs, mean_lat_rad):
     }
 
 
-def build_terrain(pts, grid_bbox, grid_n=600, blur_sigma=14):
-    lat = np.array([p["lat"] for p in pts][::3])
-    lon = np.array([p["lon"] for p in pts][::3])
-    ele = np.array([p["ele"] for p in pts][::3])
+def fetch_srtm_tile(lat, lon):
+    """Download (and cache) the SRTM1 .hgt tile covering (lat, lon) from the
+    public AWS "elevation-tiles-prod" open dataset."""
+    lat_i, lon_i = floor(lat), floor(lon)
+    ns = "N" if lat_i >= 0 else "S"
+    ew = "E" if lon_i >= 0 else "W"
+    name = f"{ns}{abs(lat_i):02d}{ew}{abs(lon_i):03d}"
 
+    TERRAIN_CACHE.mkdir(exist_ok=True)
+    hgt_path = TERRAIN_CACHE / f"{name}.hgt"
+    if not hgt_path.exists():
+        gz_path = TERRAIN_CACHE / f"{name}.hgt.gz"
+        url = f"https://s3.amazonaws.com/elevation-tiles-prod/skadi/{ns}{abs(lat_i):02d}/{name}.hgt.gz"
+        subprocess.run(["curl", "-sS", "-f", "-o", str(gz_path), url], check=True)
+        with gzip.open(gz_path, "rb") as fin, open(hgt_path, "wb") as fout:
+            fout.write(fin.read())
+        gz_path.unlink()
+
+    data = np.fromfile(hgt_path, dtype=">i2").reshape(SRTM_SIZE, SRTM_SIZE).astype(float)
+    data[data < -1000] = np.nan  # SRTM void sentinel
+    return data, lat_i, lon_i
+
+
+def build_terrain(grid_bbox, upsample=3, blur_sigma=1.0):
     lon_min, lon_max, lat_min, lat_max = grid_bbox
     mean_lat_rad = radians((lat_min + lat_max) / 2)
-    aspect_ll = (lat_max - lat_min) / (lon_max - lon_min)
-    nx = grid_n
-    ny = max(2, int(round(grid_n * aspect_ll)))
 
-    gx = np.linspace(lon_min, lon_max, nx)
-    gy = np.linspace(lat_min, lat_max, ny)
-    GX, GY = np.meshgrid(gx, gy)
+    dem, lat_i, lon_i = fetch_srtm_tile((lat_min + lat_max) / 2, (lon_min + lon_max) / 2)
 
-    grid = griddata((lon, lat), ele, (GX, GY), method="linear")
-    grid_nn = griddata((lon, lat), ele, (GX, GY), method="nearest")
-    grid = np.where(np.isnan(grid), grid_nn, grid)
-    grid = np.nan_to_num(grid, nan=float(np.nanmin(ele)))
+    def row_for_lat(lat):
+        return (lat_i + 1 - lat) * (SRTM_SIZE - 1)
+
+    def col_for_lon(lon):
+        return (lon - lon_i) * (SRTM_SIZE - 1)
+
+    r0, r1 = sorted([row_for_lat(lat_max), row_for_lat(lat_min)])
+    c0, c1 = sorted([col_for_lon(lon_min), col_for_lon(lon_max)])
+    r0, r1, c0, c1 = int(floor(r0)), int(ceil(r1)) + 1, int(floor(c0)), int(ceil(c1)) + 1
+    grid = dem[max(0, r0):r1, max(0, c0):c1]
+
+    if np.isnan(grid).any():
+        nn = np.array(np.nonzero(~np.isnan(grid))).T
+        from scipy.interpolate import NearestNDInterpolator
+        interp = NearestNDInterpolator(nn, grid[~np.isnan(grid)])
+        rr, cc = np.mgrid[0:grid.shape[0], 0:grid.shape[1]]
+        grid = interp(rr, cc)
+
+    if upsample > 1:
+        grid = ndi_zoom(grid, upsample, order=3)
     grid = gaussian_filter(grid, sigma=blur_sigma)
+    ny, nx = grid.shape
 
     terrain_cmap = LinearSegmentedColormap.from_list(
         "yushan_terrain",
@@ -150,7 +185,7 @@ def build_terrain(pts, grid_bbox, grid_n=600, blur_sigma=14):
     dy = (lat_max - lat_min) * 110540 / ny
     ls = LightSource(azdeg=315, altdeg=55)
     rgb = ls.shade(grid, cmap=terrain_cmap, blend_mode="soft",
-                    vert_exag=2.5, dx=dx, dy=dy)
+                    vert_exag=1.8, dx=dx, dy=dy)
 
     extent = (lon_min, lon_max, lat_min, lat_max)
     return rgb, extent, mean_lat_rad
@@ -181,7 +216,7 @@ def main():
 
     mean_lat_rad = radians(float(np.mean(rs["lat"])))
     cam = camera_windows(rs, mean_lat_rad)
-    rgb, extent, _ = build_terrain(pts, cam["grid_bbox"])
+    rgb, extent, _ = build_terrain(cam["grid_bbox"])
 
     segs, seg_rec = make_segments(rs["lon"], rs["lat"], rs["rec"])
 
